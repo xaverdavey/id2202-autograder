@@ -132,14 +132,22 @@ impl<'a> TagRunner<'a> {
             job: opts.job,
             container: ContainerInfo {
                 podman: {
+                    let podman = &opts.settings.runner.podman;
                     let mut c = PodmanContainer::new(
                         s_img.image.clone(),
                         format!("id2202_runner{}", opts.runner_id),
                     );
-                    c.network = Some(format!(
-                        "{}{}",
-                        opts.settings.runner.podman.network_prefix, opts.runner_id
-                    ));
+                    if podman.build_network {
+                        c.network = Some(format!("{}{}", podman.network_prefix, opts.runner_id));
+                    }
+                    let limits = &podman.solution_limits;
+                    c.memory = limits.memory.clone();
+                    c.pids_limit = limits.pids_limit;
+                    c.drop_privileges = s_img.drop_privileges.unwrap_or(limits.drop_privileges);
+                    c.read_only = s_img.read_only.unwrap_or(limits.read_only);
+                    c.tmpfs = s_img.tmpfs.clone();
+                    c.keep_capabilities =
+                        s_img.keep_capabilities.clone().unwrap_or_else(|| limits.keep_capabilities.clone());
                     c
                 },
                 internal_build_dir: path_absolute_join(&s_img.tmpdir, "graded_solution")?,
@@ -587,19 +595,16 @@ impl<'a> TagRunner<'a> {
                 }
             },
         }
-        log::info!("Build finished. Disconnecting network from container.");
-
-        // Now disconnect the container from the network
-        syscommand_timeout(
-            [
-                "podman",
-                "network",
-                "disconnect",
-                self.container.podman.network.as_deref().unwrap_or("none"),
-                &self.container.podman.name,
-            ],
-            SyscommandSettings { expected_code: Some(0), ..Default::default() },
-        )?;
+        // Now disconnect the container from the network, if it had one
+        if let Some(network) = self.container.podman.network.as_deref() {
+            log::info!("Build finished. Disconnecting network from container.");
+            syscommand_timeout(
+                ["podman", "network", "disconnect", network, &self.container.podman.name],
+                SyscommandSettings { expected_code: Some(0), ..Default::default() },
+            )?;
+        } else {
+            log::info!("Build finished, with no network to disconnect.");
+        }
 
         log::info!("Proceeding to run test cases.");
 

@@ -37,6 +37,21 @@ RUN sed -i -e '/^\s*mount_program\s*=/d' \
            -e 's/^\s*mountopt\s*=.*/mountopt = "nodev"/' \
            /etc/containers/storage.conf
 
+# The base image is set up for podman where cgroups are not to be had, and
+# turns them off: so every limit a grading container is given (--memory,
+# --pids-limit) is dropped without a word. Here they are to be had (see
+# delegate-cgroups below), so on, each container in its own cgroup and IPC
+# namespace, so that one grading's processes and shared memory are no other's.
+RUN sed -i -e 's/^cgroups="disabled"/cgroups="enabled"/' \
+           -e 's/^cgroupns="host"/cgroupns="private"/' \
+           -e 's/^ipcns="host"/ipcns="private"/' \
+           /etc/containers/containers.conf \
+    && grep -q '^cgroups="enabled"' /etc/containers/containers.conf
+
 ENV PATH="/root/.cargo/bin:$PATH"
 
+# Hands the cgroup controllers down to the grading containers, so that their
+# memory and process limits hold (misc/container/delegate-cgroups.sh).
+ADD misc/container/delegate-cgroups.sh /usr/local/bin/delegate-cgroups
+ENTRYPOINT [ "/usr/local/bin/delegate-cgroups" ]
 CMD [ "bash" ]

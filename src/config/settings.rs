@@ -452,6 +452,62 @@ pub struct PodmanSettings {
     /// Declarations of the available images to be used by the test specification.
     #[config(default = {})]
     pub images: BTreeMap<String, PodmanImageSettings>,
+
+    /// Whether the container a solution is built and tested in is on the
+    /// runner's network while the solution is built, as for a build that
+    /// fetches what it needs (it is disconnected before the tests run).
+    /// Off, the container has no network at all, the build included: the
+    /// build runs the submission's own files, a repository's Makefile say,
+    /// and with a network those could reach anything the host can.
+    ///
+    /// # Default
+    /// `true`.
+    #[config(env = "AUTOGRADER_RUNNER_PODMAN_BUILD_NETWORK", default = true)]
+    pub build_network: bool,
+
+    /// Limits on the container a solution is built and tested in, which runs
+    /// the submitted code. Unset, it has none beyond the runner's own.
+    #[config(nested)]
+    pub solution_limits: SolutionLimitSettings,
+}
+
+/// Limits on the container a submitted solution runs in, as the verifier's
+/// container always has them: so that code that forks without end, eats
+/// memory, or tries what root may, harms nothing beyond its own grading.
+#[derive(Config, Deserialize, JsonSchema, Debug, Clone)]
+pub struct SolutionLimitSettings {
+    /// The most memory it may use, as podman's `--memory` takes it ("1g").
+    #[config(env = "AUTOGRADER_RUNNER_PODMAN_SOLUTION_MEMORY")]
+    pub memory: Option<String>,
+
+    /// The most processes it may run at once (`--pids-limit`).
+    #[config(env = "AUTOGRADER_RUNNER_PODMAN_SOLUTION_PIDS_LIMIT")]
+    pub pids_limit: Option<u32>,
+
+    /// Every capability dropped, but those in `keep_capabilities`, and none
+    /// to be gained (`--cap-drop ALL`, `--security-opt no-new-privileges`).
+    ///
+    /// # Default
+    /// `false`.
+    #[config(env = "AUTOGRADER_RUNNER_PODMAN_SOLUTION_DROP_PRIVILEGES", default = false)]
+    pub drop_privileges: bool,
+
+    /// The capabilities kept when the others are dropped (`--cap-add`): for
+    /// a build that must itself switch to an unprivileged user to run the
+    /// submission (SETUID and SETGID), say.
+    ///
+    /// # Default
+    /// None.
+    #[config(default = [])]
+    pub keep_capabilities: Vec<String>,
+
+    /// Its root filesystem read-only (`--read-only`), the image's tmpdir and
+    /// the other temporary directories podman mounts writable.
+    ///
+    /// # Default
+    /// `false`.
+    #[config(env = "AUTOGRADER_RUNNER_PODMAN_SOLUTION_READ_ONLY", default = false)]
+    pub read_only: bool,
 }
 
 /// Declaration and specification for specific podman images.
@@ -487,6 +543,40 @@ pub struct PodmanImageSettings {
     /// `/mnt/tests` if not provided.
     #[serde_inline_default("/mnt/tests".to_string())]
     pub mount_tests: String,
+
+    /// Whether a solution's container on this image drops every capability,
+    /// in place of `runner.podman.solution_limits.drop_privileges`: for an
+    /// image whose build needs root's, as one that adds a user to run the
+    /// submission as does.
+    ///
+    /// # Default
+    /// `runner.podman.solution_limits.drop_privileges` if not provided.
+    pub drop_privileges: Option<bool>,
+
+    /// The capabilities kept when the others are dropped, in place of
+    /// `runner.podman.solution_limits.keep_capabilities`.
+    ///
+    /// # Default
+    /// `runner.podman.solution_limits.keep_capabilities` if not provided.
+    pub keep_capabilities: Option<Vec<String>>,
+
+    /// Likewise for a read-only root filesystem, in place of
+    /// `runner.podman.solution_limits.read_only`: for an image whose build
+    /// writes outside its tmpdir.
+    ///
+    /// # Default
+    /// `runner.podman.solution_limits.read_only` if not provided.
+    pub read_only: Option<bool>,
+
+    /// Directories a solution's container on this image has as tmpfs
+    /// (`--tmpfs`), counted against its memory limit: for an image whose
+    /// root filesystem stays writable, where the submitted code may write,
+    /// so that what it writes there cannot fill the disk.
+    ///
+    /// # Default
+    /// None if not provided.
+    #[serde(default)]
+    pub tmpfs: Vec<String>,
 }
 
 /// Information about how to build a podman image.

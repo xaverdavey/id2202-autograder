@@ -267,6 +267,10 @@ pub struct PodmanContainer {
 
     /// Memory limit in podman's notation, e.g. `"256m"`.
     pub memory: Option<String>,
+    /// Directories mounted as tmpfs (`--tmpfs`).
+    pub tmpfs: Vec<String>,
+    /// The capabilities kept when `drop_privileges` drops the rest.
+    pub keep_capabilities: Vec<String>,
 
     start_polling_interval: Duration,
 
@@ -287,6 +291,8 @@ impl PodmanContainer {
             drop_privileges: false,
             pids_limit: None,
             memory: None,
+            tmpfs: vec![],
+            keep_capabilities: vec![],
             start_polling_interval: Duration::from_millis(100),
             is_started: false,
         }
@@ -312,18 +318,20 @@ impl PodmanContainer {
             flags.push("--read-only".into());
         }
         if self.drop_privileges {
-            flags.extend([
-                "--cap-drop".into(),
-                "ALL".into(),
-                "--security-opt".into(),
-                "no-new-privileges".into(),
-            ]);
+            flags.extend(["--cap-drop".into(), "ALL".into()]);
+            for cap in self.keep_capabilities.iter() {
+                flags.extend(["--cap-add".into(), cap.as_str().into()]);
+            }
+            flags.extend(["--security-opt".into(), "no-new-privileges".into()]);
         }
         if let Some(limit) = self.pids_limit {
             flags.extend(["--pids-limit".into(), limit.to_string().into()]);
         }
         if let Some(memory) = &self.memory {
             flags.extend(["--memory".into(), memory.as_str().into()]);
+        }
+        for dir in self.tmpfs.iter() {
+            flags.extend(["--tmpfs".into(), dir.as_str().into()]);
         }
         for mount in self.mounts.iter() {
             let access = if mount.writable { "rw" } else { "ro" };
