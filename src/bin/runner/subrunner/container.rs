@@ -288,6 +288,21 @@ pub struct GradingContainerOptions {
     pub container_name: String,
     pub network_name: String,
 
+    /// Whether the container is on the network while the solution is built.
+    /// Without, it has none at all.
+    pub build_network: bool,
+
+    /// Upper bound on the number of processes in the container.
+    pub pids_limit: Option<u32>,
+
+    /// Drop every capability but `keep_capabilities`, and forbid regaining
+    /// privileges.
+    pub drop_privileges: bool,
+    pub keep_capabilities: Vec<String>,
+
+    /// Mount the container's own filesystem read-only.
+    pub read_only: bool,
+
     /// Size of the scratch filesystem, which bounds everything the container
     /// writes.
     pub disk: ByteSize,
@@ -312,7 +327,8 @@ pub struct GradingContainerOptions {
 pub struct GradingContainer {
     store: ScratchStore,
     container: podman::WeakContainer,
-    network: podman::WeakNetwork,
+    /// None when the container has no network at all.
+    network: Option<podman::WeakNetwork>,
 
     /// The memory limit the container was created with, in bytes.
     memory: usize,
@@ -339,19 +355,27 @@ impl GradingContainer {
         limit: Duration,
     ) -> Result<GradingContainer, Error> {
         let store = ScratchStore::create(&opts.scratch_slot, opts.disk)?;
-        let network = podman::WeakNetwork::create(
-            store.store(),
-            opts.network_name.as_str(),
-            store.network_owner(),
-        )?;
+        let network = if opts.build_network {
+            Some(podman::WeakNetwork::create(
+                store.store(),
+                opts.network_name.as_str(),
+                store.network_owner(),
+            )?)
+        } else {
+            None
+        };
 
         let mut container = podman::WeakContainer::new(
             opts.image.as_str(),
             opts.container_name.as_str(),
             store.store(),
         );
-        container.network = Some(network.name().to_string());
+        container.network = network.as_ref().map(|n| n.name().to_string());
         container.memory = Some(opts.memory.to_podman_string());
+        container.pids_limit = opts.pids_limit;
+        container.drop_privileges = opts.drop_privileges;
+        container.keep_capabilities = opts.keep_capabilities.clone();
+        container.read_only = opts.read_only;
         container.pull_never = true;
         container.remove_on_exit = false;
         container.mounts = vec![opts.solution_dir.clone(), opts.tests_dir.clone()];
@@ -410,9 +434,12 @@ impl GradingContainer {
         Ok(slot)
     }
 
-    /// Disconnects the container from its network.
+    /// Disconnects the container from its network, if it has one.
     pub fn disconnect_network(&self) -> Result<(), Error> {
-        self.network.disconnect(&self.container)
+        match &self.network {
+            Some(network) => network.disconnect(&self.container),
+            None => Ok(()),
+        }
     }
 
     /// How many processes in the container the kernel has killed for exceeding

@@ -96,6 +96,15 @@ ssh_known_hosts = "./data/ssh/known_hosts" # host keys of the submission sources
 
 [runner.podman]
 network_prefix = "id2202_runnernet"
+#build_network = false # no network for a solution's container, its build included
+
+# Limits on the container a solution is built and tested in, as the
+# verifier's container has them. Unset, it has none.
+#[runner.podman.solution_limits]
+#pids_limit = 256
+#drop_privileges = true
+#keep_capabilities = ["SETUID", "SETGID"] # kept when the rest are dropped
+#read_only = true
 
 # This must be able to be fetched, no build info provided
 [runner.podman.images.default]

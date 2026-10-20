@@ -515,6 +515,61 @@ pub struct PodmanSettings {
     /// the test configuration which requires at least one image to function.
     #[config(default = {})]
     pub images: BTreeMap<String, PodmanImageSettings>,
+
+    /// Whether the container a solution is built and tested in is on the
+    /// runner's network while the solution is built, as for a build that
+    /// fetches what it needs (it is disconnected before the tests run).
+    /// Off, the container has no network at all, the build included: the
+    /// build runs the submission's own files, a repository's Makefile say,
+    /// and with a network those could reach anything the host can.
+    ///
+    /// # Default
+    /// `true`.
+    #[config(env = "AUTOGRADER_RUNNER_PODMAN_BUILD_NETWORK", default = true)]
+    pub build_network: bool,
+
+    /// Limits on the container a solution is built and tested in, which runs
+    /// the submitted code, besides the tag's memory and disk: the ones the
+    /// verifier's container has. Unset, it has none of them.
+    #[config(nested)]
+    pub solution_limits: SolutionLimitSettings,
+}
+
+/// Limits on the container a submitted solution runs in, as the verifier's
+/// container has them: so that code that forks without end, or tries what
+/// root may, harms nothing beyond its own grading.
+#[derive(Config, Deserialize, JsonSchema, Debug, Clone)]
+#[schemars(title = "Solution limits")]
+pub struct SolutionLimitSettings {
+    /// The most processes it may run at once (`--pids-limit`).
+    #[config(env = "AUTOGRADER_RUNNER_PODMAN_SOLUTION_PIDS_LIMIT")]
+    pub pids_limit: Option<u32>,
+
+    /// Every capability dropped, but those in `keep_capabilities`, and none
+    /// to be gained (`--cap-drop ALL`, `--security-opt no-new-privileges`).
+    ///
+    /// # Default
+    /// `false`.
+    #[config(env = "AUTOGRADER_RUNNER_PODMAN_SOLUTION_DROP_PRIVILEGES", default = false)]
+    pub drop_privileges: bool,
+
+    /// The capabilities kept when the others are dropped (`--cap-add`): for
+    /// a build that switches to an unprivileged user to run the submission
+    /// (SETUID and SETGID), say.
+    ///
+    /// # Default
+    /// None.
+    #[config(default = [])]
+    pub keep_capabilities: Vec<String>,
+
+    /// Its root filesystem read-only (`--read-only`). Podman still mounts
+    /// `/tmp`, `/var/tmp` and `/run` writable, so an image's tmpdir has to be
+    /// under one of them (the default `/tmp` is).
+    ///
+    /// # Default
+    /// `false`.
+    #[config(env = "AUTOGRADER_RUNNER_PODMAN_SOLUTION_READ_ONLY", default = false)]
+    pub read_only: bool,
 }
 
 /// Declaration and specification for specific podman images.
@@ -555,6 +610,30 @@ pub struct PodmanImageSettings {
     /// `/mnt/tests` if not provided.
     #[serde_inline_default("/mnt/tests".to_string())]
     pub mount_tests: String,
+
+    /// Whether a solution's container on this image drops every capability,
+    /// in place of `runner.podman.solution_limits.drop_privileges`: for an
+    /// image whose build needs more of root's, as one that adds a user to
+    /// run the submission as does.
+    ///
+    /// # Default
+    /// `runner.podman.solution_limits.drop_privileges` if not provided.
+    pub drop_privileges: Option<bool>,
+
+    /// The capabilities kept when the others are dropped, in place of
+    /// `runner.podman.solution_limits.keep_capabilities`.
+    ///
+    /// # Default
+    /// `runner.podman.solution_limits.keep_capabilities` if not provided.
+    pub keep_capabilities: Option<Vec<String>>,
+
+    /// Likewise for a read-only root filesystem, in place of
+    /// `runner.podman.solution_limits.read_only`: for an image whose build
+    /// writes outside its tmpdir.
+    ///
+    /// # Default
+    /// `runner.podman.solution_limits.read_only` if not provided.
+    pub read_only: Option<bool>,
 }
 
 /// Information about how to build a podman image.
@@ -753,5 +832,29 @@ impl Settings {
             })?)
             .apply()
             .map_err(|e| e.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Without the settings, a solution's container is as before them: on the
+    /// network while it is built, and without the verifier's limits.
+    #[test]
+    fn test_solution_limits_off_by_default() {
+        let settings =
+            Settings::load(concat!(env!("CARGO_MANIFEST_DIR"), "/example/settings.toml")).unwrap();
+        let podman = &settings.runner.podman;
+        assert!(podman.build_network);
+        assert_eq!(podman.solution_limits.pids_limit, None);
+        assert!(!podman.solution_limits.drop_privileges);
+        assert!(podman.solution_limits.keep_capabilities.is_empty());
+        assert!(!podman.solution_limits.read_only);
+        for image in podman.images.values() {
+            assert!(image.drop_privileges.is_none());
+            assert!(image.keep_capabilities.is_none());
+            assert!(image.read_only.is_none());
+        }
     }
 }

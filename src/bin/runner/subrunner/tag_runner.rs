@@ -162,6 +162,17 @@ impl<'a> TagRunner<'a> {
                     "{}{}",
                     opts.settings.runner.podman.network_prefix, opts.runner_id
                 ),
+                build_network: opts.settings.runner.podman.build_network,
+                pids_limit: opts.settings.runner.podman.solution_limits.pids_limit,
+                drop_privileges: s_img
+                    .drop_privileges
+                    .unwrap_or(opts.settings.runner.podman.solution_limits.drop_privileges),
+                keep_capabilities: s_img.keep_capabilities.clone().unwrap_or_else(|| {
+                    opts.settings.runner.podman.solution_limits.keep_capabilities.clone()
+                }),
+                read_only: s_img
+                    .read_only
+                    .unwrap_or(opts.settings.runner.podman.solution_limits.read_only),
                 disk: opts.tag.solution_limit_disk,
                 memory: opts.tag.solution_limit_ram,
                 internal_build_dir: path_absolute_join(&s_img.tmpdir, "graded_solution")?,

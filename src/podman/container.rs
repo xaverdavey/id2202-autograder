@@ -157,8 +157,12 @@ pub struct WeakContainer {
     /// Mount the container's own filesystem read-only.
     pub read_only: bool,
 
-    /// Drop every capability and forbid regaining privileges.
+    /// Drop every capability (but `keep_capabilities`) and forbid regaining
+    /// privileges.
     pub drop_privileges: bool,
+
+    /// The capabilities kept when `drop_privileges` drops the rest.
+    pub keep_capabilities: Vec<String>,
 
     /// Upper bound on the number of processes in the container.
     pub pids_limit: Option<u32>,
@@ -191,6 +195,7 @@ impl WeakContainer {
             mounts: vec![],
             read_only: false,
             drop_privileges: false,
+            keep_capabilities: vec![],
             pids_limit: None,
             memory: None,
             pull_never: false,
@@ -240,12 +245,11 @@ impl WeakContainer {
             flags.push("--read-only".into());
         }
         if self.drop_privileges {
-            flags.extend([
-                "--cap-drop".into(),
-                "ALL".into(),
-                "--security-opt".into(),
-                "no-new-privileges".into(),
-            ]);
+            flags.extend(["--cap-drop".into(), "ALL".into()]);
+            for cap in self.keep_capabilities.iter() {
+                flags.extend(["--cap-add".into(), cap.as_str().into()]);
+            }
+            flags.extend(["--security-opt".into(), "no-new-privileges".into()]);
         }
         if let Some(limit) = self.pids_limit {
             flags.extend(["--pids-limit".into(), limit.to_string().into()]);
@@ -396,5 +400,51 @@ impl Teardown for WeakContainer {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flags_of(container: &WeakContainer) -> Vec<String> {
+        container.flags().into_iter().map(|f| f.into_owned()).collect()
+    }
+
+    #[test]
+    fn test_no_network_is_none() {
+        let container = WeakContainer::new("image", "name", Store::default());
+        let flags = flags_of(&container);
+        let at = flags.iter().position(|f| f == "--network").unwrap();
+        assert_eq!(flags[at + 1], "none");
+    }
+
+    #[test]
+    fn test_kept_capabilities_between_drop_and_no_new_privileges() {
+        let mut container = WeakContainer::new("image", "name", Store::default());
+        container.drop_privileges = true;
+        container.keep_capabilities = vec!["SETUID".into(), "SETGID".into()];
+        let flags = flags_of(&container);
+        let at = flags.iter().position(|f| f == "--cap-drop").unwrap();
+        assert_eq!(
+            flags[at..at + 8],
+            [
+                "--cap-drop",
+                "ALL",
+                "--cap-add",
+                "SETUID",
+                "--cap-add",
+                "SETGID",
+                "--security-opt",
+                "no-new-privileges"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_capabilities_kept_only_when_dropping() {
+        let mut container = WeakContainer::new("image", "name", Store::default());
+        container.keep_capabilities = vec!["SETUID".into()];
+        assert!(!flags_of(&container).iter().any(|f| f == "--cap-add" || f == "--cap-drop"));
     }
 }
